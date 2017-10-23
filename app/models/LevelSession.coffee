@@ -1,4 +1,5 @@
 CocoModel = require './CocoModel'
+api = require('core/api')
 
 module.exports = class LevelSession extends CocoModel
   @className: 'LevelSession'
@@ -15,8 +16,6 @@ module.exports = class LevelSession extends CocoModel
   updatePermissions: ->
     permissions = @get 'permissions', true
     permissions = (p for p in permissions when p.target isnt 'public')
-    if @get('multiplayer')
-      permissions.push {target: 'public', access: 'write'}
     @set 'permissions', permissions
 
   getSourceFor: (spellKey) ->
@@ -41,7 +40,7 @@ module.exports = class LevelSession extends CocoModel
     @get('submittedCodeLanguage')? and @get('team')?
 
   completed: ->
-    @get('state')?.complete || false
+    @get('state')?.complete || @get('submitted') || false
 
   shouldAvoidCorruptData: (attrs) ->
     return false unless me.team is 'humans'
@@ -67,9 +66,16 @@ module.exports = class LevelSession extends CocoModel
     return 0 unless last = state.lastUnsuccessfulSubmissionTime
     last = new Date(last) if _.isString last
     # Wait at least this long before allowing submit button active again.
-    (last - new Date()) + 22 * 60 * 60 * 1000
+    wait = (last - new Date()) + 22 * 60 * 60 * 1000
+    if wait > 24 * 60 * 60 * 1000
+      # System clock must've gotten busted; max out at one day's wait.
+      wait = 24 * 60 * 60 * 1000
+      state.lastUnsuccessfulSubmissionTime = new Date()
+      @set 'state', state
+    wait
 
   recordScores: (scores, level) ->
+    return unless scores
     state = @get 'state'
     oldTopScores = state.topScores ? []
     newTopScores = []
@@ -87,3 +93,48 @@ module.exports = class LevelSession extends CocoModel
         newTopScores.push oldTopScore
     state.topScores = newTopScores
     @set 'state', state
+
+  generateSpellsObject: (options={}) ->
+    {level} = options
+    {createAetherOptions} = require 'lib/aether_utils'
+    aetherOptions = createAetherOptions functionName: 'plan', codeLanguage: @get('codeLanguage'), skipProtectAPI: options.level?.isType('game-dev')
+    spellThang = thang: {id: 'Hero Placeholder'}, aether: new Aether aetherOptions
+    spells = "hero-placeholder/plan": thang: spellThang, name: 'plan'
+    source = @get('code')?['hero-placeholder']?.plan ? ''
+    try
+      spellThang.aether.transpile source
+    catch e
+      console.log "Couldn't transpile!\n#{source}\n", e
+      spellThang.aether.transpile ''
+    spells
+
+  isFake: -> @id is 'A Fake Session ID'
+
+  inLeague: (leagueId) ->
+    return false unless @get('leagues')
+    for league in @get('leagues')
+      return true if league.leagueID is leagueId
+    return false
+
+  updateKeyValueDb: (keyValueDb) ->
+    oldDb = @get('keyValueDb') ? {}
+    @originalKeyValueDb ?= oldDb
+    @set('keyValueDb', keyValueDb) if _.size keyValueDb
+
+  saveKeyValueDb: ->
+    keyValueDb = @get('keyValueDb') ? {}
+    return unless @originalKeyValueDb
+    return if @isFake()
+    for key, value of keyValueDb
+      oldValue = @originalKeyValueDb[key]
+      if not oldValue or typeof(oldValue) is 'string' or typeof(value) is 'string'
+        api.levelSessions.setKeyValue({ sessionID: @id, key, value})
+      else if typeof(oldValue) is 'number' and typeof(value) is 'number'
+        increment = value - oldValue
+        api.levelSessions.incrementKeyValue({ sessionID: @id, key, value: increment})
+
+    @set('keyValueDb', keyValueDb) if _.size keyValueDb
+    delete @originalKeyValueDb
+
+
+

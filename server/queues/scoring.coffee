@@ -6,14 +6,13 @@ errors = require '../commons/errors'
 aws = require 'aws-sdk'
 db = require './../routes/db'
 queues = require '../commons/queue'
-LevelSession = require '../levels/sessions/LevelSession'
-Level = require '../levels/Level'
-User = require '../users/User'
-TaskLog = require './scoring/ScoringTask'
+LevelSession = require '../models/LevelSession'
+Level = require '../models/Level'
+User = require '../models/User'
+TaskLog = require './../models/ScoringTask'
 scoringUtils = require './scoring/scoringUtils'
 getTwoGames = require './scoring/getTwoGames'
 recordTwoGames = require './scoring/recordTwoGames'
-createNewTask = require './scoring/createNewTask'
 dispatchTaskToConsumer = require './scoring/dispatchTaskToConsumer'
 processTaskResult = require './scoring/processTaskResult'
 
@@ -41,6 +40,5 @@ module.exports.addPairwiseTaskToQueueFromRequest = (req, res) ->
 
 module.exports.getTwoGames = getTwoGames
 module.exports.recordTwoGames = recordTwoGames
-module.exports.createNewTask = createNewTask
 module.exports.dispatchTaskToConsumer = dispatchTaskToConsumer
 module.exports.processTaskResult = processTaskResult
