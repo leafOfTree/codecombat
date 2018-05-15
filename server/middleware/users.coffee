@@ -16,6 +16,8 @@ CourseInstance = require '../models/CourseInstance'
 facebook = require '../lib/facebook'
 gplus = require '../lib/gplus'
 TrialRequest = require '../models/TrialRequest'
+Campaign = require '../models/Campaign'
+Course = require '../models/Course'
 Achievement = require '../models/Achievement'
 UserPollsRecord = require '../models/UserPollsRecord'
 EarnedAchievement = require '../models/EarnedAchievement'
@@ -181,24 +183,35 @@ module.exports =
 
   getStudents: wrap (req, res, next) ->
     throw new errors.Unauthorized('You must be an administrator.') unless req.user?.isAdmin()
-    query = $or: [{role: 'student'}, {$and: [{schoolName: {$exists: true}}, {schoolName: {$ne: ''}}, {anonymous: false}]}]
-    users = yield User.find(query).select('lastIP').lean()
+    limit = parseInt(req.query.options?.limit ? 0)
+    query = {$or: [{role: 'student'}, {$and: [{schoolName: {$exists: true}}, {schoolName: {$ne: ''}}, {anonymous: false}]}]}
+    if req.query.options?.beforeId
+      beforeId = mongoose.Types.ObjectId(req.query.options.beforeId)
+      query = {$and: [{_id: {$lt: beforeId}}, query]}
+    users = yield User.find(query).sort({_id: -1}).limit(limit).select('lastIP').lean()
     for user in users
       if ip = user.lastIP
         user.geo = geoip.lookup(ip)
         if country = user.geo?.country
           user.geo.countryName = countryList.getName(country)
+      delete user.lastIP
     res.status(200).send(users)
 
   getTeachers: wrap (req, res, next) ->
     throw new errors.Unauthorized('You must be an administrator.') unless req.user?.isAdmin()
+    limit = parseInt(req.query.options?.limit ? 0)
     teacherRoles = ['teacher', 'technology coordinator', 'advisor', 'principal', 'superintendent', 'parent']
-    users = yield User.find(anonymous: false, role: {$in: teacherRoles}).select('lastIP').lean()
+    query = {anonymous: false, role: {$in: teacherRoles}}
+    if req.query.options?.beforeId
+      beforeId = mongoose.Types.ObjectId(req.query.options.beforeId)
+      query = {$and: [{_id: {$lt: beforeId}}, query]}
+    users = yield User.find(query).sort({_id: -1}).limit(limit).select('lastIP').lean()
     for user in users
       if ip = user.lastIP
         user.geo = geoip.lookup(ip)
         if country = user.geo?.country
           user.geo.countryName = countryList.getName(country)
+      delete user.lastIP
     res.status(200).send(users)
 
   getLeadPriority: wrap (req, res, next) ->
@@ -214,6 +227,21 @@ module.exports =
         # this is the only outcome specifically used; determines if we try to sell them starter licenses
         return res.status(200).send({ priority: 'low' })
     return res.status(200).send({ priority: undefined })
+
+    
+  setVerifiedTeacher: wrap (req, res) ->
+    unless _.isBoolean(req.body)
+      throw new errors.UnprocessableEntity('verifiedTeacher must be a boolean')
+
+    user = yield database.getDocFromHandle(req, User)
+    if not user
+      throw new errors.NotFound('User not found.')
+      
+    update = { "verifiedTeacher": req.body }
+    user.set(update)
+    yield user.update({ $set: update })
+    res.status(200).send(user.toObject({req}))
+
 
   signupWithPassword: wrap (req, res) ->
     unless req.user.isAnonymous()
@@ -287,6 +315,8 @@ module.exports =
     yield module.exports.finishSignup(req, res)
 
   finishSignup: co.wrap (req, res) ->
+    if req.user.get('role') is 'possible teacher'
+      req.user.set 'role', undefined
     try
       yield req.user.save()
     catch e
@@ -404,7 +434,7 @@ module.exports =
     unless req.user.isAdmin()
       throw new errors.Forbidden()
 
-    projection = name: 1, email: 1, dateCreated: 1, role: 1
+    projection = name: 1, email: 1, dateCreated: 1, role: 1, firstName: 1, lastName: 1
 
     search = adminSearch
     query = {
@@ -446,11 +476,22 @@ module.exports =
     else if search.length > 5
       searchParts = search.split(/[.+@]/)
       if searchParts.length > 1
-        users = users.concat(yield User.find({emailLower: {$regex: '^' + searchParts[0]}}).select(projection))
+        users = users.concat(yield User.find({emailLower: {$regex: '^' + searchParts[0]}}).limit(50).select(projection))
 
     users = _.uniq(users, false, (u) -> u.id)
 
-    res.send(users)
+    teachers = (user for user in users when user?.isTeacher())
+    trialRequests = yield TrialRequest.find({applicant: $in: (teacher._id for teacher in teachers)})
+    trialRequestMap = _.zipObject([t.get('applicant').toString(), t.toObject()] for t in trialRequests)
+
+    toSend = _.map(users, (user) =>
+      userObject = user.toObject()
+      trialRequest = trialRequestMap[user.id]
+      if trialRequest
+        userObject._trialRequest = _.pick(trialRequest.properties, 'organization', 'district', 'nces_name', 'nces_district')
+      return userObject
+    )
+    res.send(toSend)
 
 
   sphinxSearch: co.wrap (req, search) ->
@@ -484,15 +525,21 @@ module.exports =
   resetProgress: wrap (req, res) ->
     unless req.user
       throw new errors.Unauthorized()
-    if req.params.handle isnt req.user.id
-      throw new errors.Forbidden('Users may only delete themselves')
     if req.user.isAdmin()
-      throw new errors.Forbidden('Admins cannot reset progress') # as a precaution
+      if req.params.handle is req.user.id
+        throw new errors.Forbidden('Admins cannot reset their own progress')
+      user = yield database.getDocFromHandle(req, User)
+      if not user
+        throw new errors.NotFound('User not found.')
+    else
+      if req.params.handle isnt req.user.id
+        throw new errors.Forbidden('Users may only delete themselves')
+      user = req.user
     yield [
-      LevelSession.remove({creator: req.user.id})
-      EarnedAchievement.remove({user: req.user.id})
-      UserPollsRecord.remove({user: req.user.id}) # so that gems can be re-awarded
-      req.user.update({
+      LevelSession.remove({creator: user.id})
+      EarnedAchievement.remove({user: user.id})
+      UserPollsRecord.remove({user: user.id}) # so that gems can be re-awarded
+      user.update({
         $set: {
           points: 0,
           'stats.gamesCompleted': 0,
@@ -528,11 +575,41 @@ module.exports =
 
     if thang = user.get('heroConfig')?.thangType
       fallback ?= "/file/db/thang.type/#{thang}/portrait.png"
-      
+
     fallback ?= makeHostUrl(req, '/file/db/thang.type/52a00d55cf1818f2be00000b/portrait.png')
     unless /^http/.test fallback
       fallback = makeHostUrl(req, fallback)
     combinedPhotoURL = "https://secure.gravatar.com/avatar/#{emailHash}?s=#{size}&default=#{encodeURI(encodeURI(fallback))}"
-    
+
     res.redirect(combinedPhotoURL)
     res.end()
+
+
+  getCourseInstances: wrap (req, res) ->
+    user = yield database.getDocFromHandle(req, User)
+    if not user
+      throw new errors.NotFound('User not found')
+
+    unless req.user.isAdmin() or req.user.id is user.id
+      throw new errors.Forbidden()
+
+    if user.isTeacher()
+      query = { ownerID: req.user._id }
+    else
+      query = { members: req.user._id }
+
+    if req.query.campaignSlug
+      campaign = yield Campaign.findBySlug(req.query.campaignSlug).select({_id:1})
+      if not campaign
+        throw new errors.NotFound('Campaign not found')
+
+      campaignID = campaign._id
+      course = yield Course.findOne({ campaignID }).select({_id: 1})
+      query.courseID = course._id
+
+    dbq = CourseInstance.find(query)
+    dbq.limit(parse.getLimitFromReq(req))
+    dbq.skip(parse.getSkipFromReq(req))
+    dbq.select(parse.getProjectFromReq(req))
+    courseInstances = yield dbq.exec()
+    res.status(200).send(ci.toObject({req}) for ci in courseInstances)

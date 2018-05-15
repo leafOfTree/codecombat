@@ -1,7 +1,6 @@
 FacebookHandler = require 'core/social-handlers/FacebookHandler'
 GPlusHandler = require 'core/social-handlers/GPlusHandler'
 GitHubHandler = require 'core/social-handlers/GitHubHandler'
-ModuleLoader = require 'core/ModuleLoader'
 locale = require 'locale/locale'
 {me} = require 'core/auth'
 storage = require 'core/storage'
@@ -62,6 +61,8 @@ Application = {
     )
     store.commit('me/updateUser', me.attributes)
     store.commit('updateFeatures', features)
+    @store = store
+    @api = api
 
     @isIPadApp = webkit?.messageHandlers? and navigator.userAgent?.indexOf('CodeCombat-iPad') isnt -1
     $('body').addClass 'ipad' if @isIPadApp
@@ -72,10 +73,11 @@ Application = {
     @facebookHandler = new FacebookHandler()
     @gplusHandler = new GPlusHandler()
     @githubHandler = new GitHubHandler()
-    @moduleLoader = new ModuleLoader()
-    @moduleLoader.loadLanguage(me.get('preferredLanguage', true))
+    locale.load(me.get('preferredLanguage', true))
+    preferredLanguage = me.get('preferredLanguage') or 'en'
     $(document).bind 'keydown', preventBackspace
     preload(COMMON_FILES)
+    moment.relativeTimeThreshold('ss', 1) # do not return 'a few seconds' when calling 'humanize' 
     CocoModel.pollAchievements()
     unless me.get('anonymous')
       # TODO: Remove logging later, once this system has proved stable

@@ -64,4 +64,17 @@ module.exports = {
       method: 'POST'
       json: {billingAgreementID}
     }))
+    
+  getCourseInstances: ({ userID, campaignSlug }, options={}) ->
+    fetchJson(@url(userID, "course-instances"), _.merge({}, options, {
+      data: { userID, campaignSlug }
+    }))
+
+  getLevelSessions: ({ userID }, options={}) ->
+    fetchJson("/db/user/#{userID}/level.sessions", _.merge({}, options))
+    
+  resetProgress: ({ userID }, options={}) ->
+    fetchJson("/db/user/#{userID}/reset_progress", _.assign({}, options, {
+      method: 'POST'
+    }))
 }

@@ -1,3 +1,4 @@
+require('app/styles/play/level/tome/tome.sass')
 # There's one TomeView per Level. It has:
 # - a CastButtonView, which has
 #   - a cast button
@@ -110,7 +111,7 @@ module.exports = class TomeView extends CocoView
         pathComponents[0] = _.string.slugify pathComponents[0]
         spellKey = pathComponents.join '/'
         @thangSpells[thang.id].push spellKey
-        skipProtectAPI = @getQueryVariable 'skip_protect_api', false
+        skipProtectAPI = utils.getQueryVariable 'skip_protect_api', false
         spell = @spells[spellKey] = new Spell
           hintsState: @options.hintsState
           programmableMethod: method
@@ -144,18 +145,16 @@ module.exports = class TomeView extends CocoView
     null
 
   onSpellLoaded: (e) ->
-    console.log 'onSpellLoaded', e if me.get('name') is 'Shanakin'
     for spellID, spell of @spells
       return unless spell.loaded
-    console.log '... all loaded, let us begin' if me.get('name') is 'Shanakin'
     justBegin = @options.level.isType('game-dev')
     @cast false, false, justBegin
 
   onCastSpell: (e) ->
     # A single spell is cast.
-    @cast e?.preload, e?.realTime, e?.justBegin
+    @cast e?.preload, e?.realTime, e?.justBegin, e?.cinematic
 
-  cast: (preload=false, realTime=false, justBegin=false) ->
+  cast: (preload=false, realTime=false, justBegin=false, cinematic=false) ->
     return if @options.level.isType('web-dev')
     sessionState = @options.session.get('state') ? {}
     if realTime
@@ -171,7 +170,9 @@ module.exports = class TomeView extends CocoView
       @spells,
       preload,
       realTime,
+      synchronous: @options.level.isType('game-dev') and not justBegin,
       justBegin,
+      cinematic,
       difficulty,
       submissionCount: sessionState.submissionCount ? 0,
       flagHistory: sessionState.flagHistory ? [],

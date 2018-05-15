@@ -3,21 +3,12 @@
 # Sort according to language popularity on Internet
 # http://en.wikipedia.org/wiki/Languages_used_on_the_Internet
 
+utils = require('../core/utils')
+
+
 module.exports =
-  update: ->
-    localesLoaded = (s for s in window.require.list() when _.string.startsWith(s, 'locale/'))
-
-    store = require('core/store')
-
-    for path in localesLoaded
-      continue if path is 'locale/locale'
-      code = path.replace('locale/', '')
-      store.commit('addLocaleLoaded', code)
-      @[code] = require(path)
-
-
-  'en': { nativeDescription: 'English', englishDescription: 'English' }
-  'en-US': { nativeDescription: 'English (US)', englishDescription: 'English (US)' }
+  'en': require('./en') # Include these in the main bundle
+  'en-US': require('./en-US')
   'en-GB': { nativeDescription: 'English (UK)', englishDescription: 'English (UK)' }
   'zh-HANS': { nativeDescription: '简体中文', englishDescription: 'Chinese (Simplified)' }
   'zh-HANT': { nativeDescription: '繁體中文', englishDescription: 'Chinese (Traditional)' }
@@ -27,6 +18,7 @@ module.exports =
   'fr': { nativeDescription: 'français', englishDescription: 'French' }
   # Begin alphabetized list: https://github.com/codecombat/codecombat/issues/2329#issuecomment-74630546
   'ar': { nativeDescription: 'العربية', englishDescription: 'Arabic' }
+  'az': { nativeDescription: 'azərbaycan dili', englishDescription: 'Azerbaijani' }
   'bg': { nativeDescription: 'български език', englishDescription: 'Bulgarian' }
   'ca': { nativeDescription: 'Català', englishDescription: 'Catalan' }
   'cs': { nativeDescription: 'čeština', englishDescription: 'Czech' }
@@ -78,44 +70,84 @@ module.exports =
   'zh-WUU-HANS': { nativeDescription: '吴语', englishDescription: 'Wuu (Simplified)' }
   'zh-WUU-HANT': { nativeDescription: '吳語', englishDescription: 'Wuu (Traditional)' }
 
-  installVueI18n: ->
-    # https://github.com/rse/vue-i18next/blob/master/vue-i18next.js, converted by js2coffee 2.2.0
-    store = require('core/store')
+# We often iterate over this module to get languages, so we don't want these helper methods to show up.
+Object.defineProperties module.exports,
+  load:
+    enumerable: false
+    value: (langCode) ->
+      console.log "Loading locale:", langCode
+      return Promise.resolve() if langCode in ['en', 'en-US']
+      promises = [
+        new Promise (accept, reject) ->
+          require('bundle-loader?lazy&name=[name]!locale/'+langCode)((localeData) -> accept(localeData))
+        .then (localeData) =>
+          @storeLoadedLanguage(langCode, localeData)
+        .catch (error) =>
+          console.error "Error loading locale '#{langCode}':\n", error
+      ]
+      firstBit = langCode[...2]
+      if (firstBit isnt langCode) and @[firstBit]?
+        promises.push(new Promise (accept, reject) ->
+          require('bundle-loader?lazy&name=locale/[name]!locale/'+firstBit)((localeData) -> accept(localeData))
+        .then (localeData) =>
+          @storeLoadedLanguage(firstBit, localeData)
+        .catch (error) =>
+          console.error "Error loading locale '#{firstBit}':\n", error
+        )
+      return Promise.all(promises)
 
-    VueI18Next = install: (Vue, options) ->
-    
-      ###  determine options  ###
-    
-      opts = {}
-      Vue.util.extend opts, options
-    
-      ###  expose a global API method  ###
-    
-      Vue.t = (key, options) ->
+  storeLoadedLanguage:
+    enumerable: false
+    value: (langCode, localeData) ->
+      store = require('core/store')
+      @[langCode] = localeData
+      store.commit('addLocaleLoaded', langCode)
+      return localeData
+
+  installVueI18n:
+    enumerable: false
+    value: ->
+      # https://github.com/rse/vue-i18next/blob/master/vue-i18next.js, converted by js2coffee 2.2.0
+      store = require('core/store')
+
+      VueI18Next = install: (Vue, options) ->
+
+        ###  determine options  ###
+
         opts = {}
-        lng = store.state.me.preferredLanguage or 'en'
-        if not store.state.localesLoaded[lng]
-          lng = 'en'
-        if typeof lng == 'string' and lng != ''
-          opts.lng = lng
         Vue.util.extend opts, options
-        i18n.t key, opts
-    
-      ###  expose a local API method  ###
-    
-      Vue::$t = (key, options) ->
-        opts = {}
-        lng = store.state.me.preferredLanguage or 'en'
-        if not store.state.localesLoaded[lng]
-          lng = 'en'
-        if typeof lng == 'string' and lng != ''
-          opts.lng = lng
-        ns = @$options.i18nextNamespace
-        if typeof ns == 'string' and ns != ''
-          opts.ns = ns
-        Vue.util.extend opts, options
-        i18n.t key, opts
-    
-      return
-    
-    Vue.use(VueI18Next)
+
+        ###  expose a global API method  ###
+
+        Vue.t = (key, options) ->
+          opts = {}
+          lng = store.state.me.preferredLanguage or 'en'
+          if not store.state.localesLoaded[lng]
+            lng = 'en'
+          if typeof lng == 'string' and lng != ''
+            opts.lng = lng
+          Vue.util.extend opts, options
+          i18n.t key, opts
+
+        ###  expose a local API method  ###
+
+        Vue::$t = (key, options) ->
+          opts = {}
+          lng = store.state.me.preferredLanguage or 'en'
+          if not store.state.localesLoaded[lng]
+            lng = 'en'
+          if typeof lng == 'string' and lng != ''
+            opts.lng = lng
+          ns = @$options.i18nextNamespace
+          if typeof ns == 'string' and ns != ''
+            opts.ns = ns
+          Vue.util.extend opts, options
+          i18n.t key, opts
+          
+        Vue::$dbt = (source, key, options) ->
+          options ?= {}
+          utils.i18n(source, key, options.language, options.fallback)
+          
+        return
+
+      Vue.use(VueI18Next)

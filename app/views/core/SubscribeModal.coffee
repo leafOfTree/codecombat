@@ -1,3 +1,4 @@
+require('app/styles/modal/subscribe-modal.sass')
 api = require 'core/api'
 ModalView = require 'views/core/ModalView'
 template = require 'templates/core/subscribe-modal'
@@ -22,13 +23,14 @@ module.exports = class SubscribeModal extends ModalView
     'click .back-to-products': 'onClickBackToProducts'
 
   constructor: (options={}) ->
-    if document.location.host is 'br.codecombat.com'
-      document.location.href = 'http://codecombat.net.br/'
+    #if document.location.host is 'br.codecombat.com'
+    #  document.location.href = 'http://codecombat.net.br/'
 
     super(options)
     @state = 'standby'
     @couponID = utils.getQueryVariable('coupon')
     @subType = utils.getQueryVariable('subtype', 'both-subs')
+    @subModalContinue = options.subModalContinue
     if options.products
       # this is just to get the test demo to work
       @products = options.products
@@ -53,7 +55,7 @@ module.exports = class SubscribeModal extends ModalView
         me.setSubModalGroup(utils.getQueryVariable('subtype'))
       else if @basicCoupon
         me.setSubModalGroup('both-subs')
-      else 
+      else
         me.getSubModalGroup()
     else
       @subType = utils.getQueryVariable('subtype', me.getSubModalGroup())
@@ -63,6 +65,7 @@ module.exports = class SubscribeModal extends ModalView
       @paymentProcessor = 'PayPal'
     else
       @paymentProcessor = 'stripe'
+    @paymentProcessor = 'stripe' # Always use Stripe
     super()
     @render()
 
@@ -91,6 +94,15 @@ module.exports = class SubscribeModal extends ModalView
     super()
     # TODO: does this work?
     @playSound 'game-menu-open'
+    if @basicProduct and @subModalContinue
+      if @subModalContinue is 'monthly'
+        @subModalContinue = null
+        @onClickPurchaseButton()
+      else if @subModalContinue is 'lifetime'
+        @subModalContinue = null
+        # Only automatically open lifetime payment dialog for Stripe, not PayPal
+        unless @basicProduct.isRegionalSubscription()
+          @onClickStripeLifetimeButton()
 
   stripeOptions: (options) ->
     return _.assign({
@@ -102,11 +114,15 @@ module.exports = class SubscribeModal extends ModalView
   onClickPurchaseButton: (e) ->
     return unless @basicProduct
     @playSound 'menu-button-click'
-    return @openModalView new CreateAccountModal({startOnPath: 'individual', signupReturnHref: document.location.href}) if me.get('anonymous')
-    if @basicProduct.isRegionalSubscription()
-      @startPayPalSubscribe()
-    else
-      @startStripeSubscribe()
+    if me.get('anonymous')
+      service = if @basicProduct.isRegionalSubscription() then 'paypal' else 'stripe'
+      application.tracker?.trackEvent 'Started Signup from buy monthly', {service}
+      return @openModalView new CreateAccountModal({startOnPath: 'individual', subModalContinue: 'monthly'})
+    # if @basicProduct.isRegionalSubscription()
+    #   @startPayPalSubscribe()
+    # else
+    #   @startStripeSubscribe()
+    @startStripeSubscribe() # Always use Stripe
 
   startPayPalSubscribe: ->
     application.tracker?.trackEvent 'Started subscription purchase', { service: 'paypal' }
@@ -160,7 +176,9 @@ module.exports = class SubscribeModal extends ModalView
   # For lifetime subs
   onPayPalPaymentStarted: =>
     @playSound 'menu-button-click'
-    return @openModalView new CreateAccountModal({startOnPath: 'individual', signupReturnHref: document.location.href}) if me.get('anonymous')
+    if me.get('anonymous')
+      application.tracker?.trackEvent 'Started Signup from buy lifetime', {service: 'paypal'}
+      return @openModalView new CreateAccountModal({startOnPath: 'individual', subModalContinue: 'lifetime'})
     startEvent = 'Start Lifetime Purchase'
     application.tracker?.trackEvent startEvent, { service: 'paypal' }
     @state = 'purchasing'
@@ -184,7 +202,9 @@ module.exports = class SubscribeModal extends ModalView
 
   onClickStripeLifetimeButton: ->
     @playSound 'menu-button-click'
-    return @openModalView new CreateAccountModal({startOnPath: 'individual', signupReturnHref: document.location.href}) if me.get('anonymous')
+    if me.get('anonymous')
+      application.tracker?.trackEvent 'Started Signup from buy lifetime', {service: 'stripe'}
+      return @openModalView new CreateAccountModal({startOnPath: 'individual', subModalContinue: 'lifetime'})
     startEvent = 'Start Lifetime Purchase'
     finishEvent = 'Finish Lifetime Purchase'
     descriptionTranslationKey = 'subscribe.lifetime'

@@ -1,3 +1,4 @@
+require('app/styles/courses/enrollments-view.sass')
 RootView = require 'views/core/RootView'
 Classrooms = require 'collections/Classrooms'
 State = require 'models/State'
@@ -45,7 +46,7 @@ module.exports = class EnrollmentsView extends RootView
         'available': []
         'pending': []
       }
-      shouldUpsell: true
+      shouldUpsell: false
     })
     window.tracker?.trackEvent 'Classes Licenses Loaded', category: 'Teachers', ['Mixpanel']
     super(options)
@@ -77,7 +78,7 @@ module.exports = class EnrollmentsView extends RootView
     leadPriorityRequest = me.getLeadPriority()
     @supermodel.trackRequest leadPriorityRequest
     leadPriorityRequest.then ({ priority }) =>
-      shouldUpsell = (priority is 'low')
+      shouldUpsell = (priority is 'low') and (me.get('preferredLanguage') isnt 'nl-BE')
       @state.set({ shouldUpsell })
       if shouldUpsell
         application.tracker?.trackEvent 'Starter License Upsell: Banner Viewed', {price: @state.get('centsPerStudent'), seats: @state.get('quantityToBuy')}

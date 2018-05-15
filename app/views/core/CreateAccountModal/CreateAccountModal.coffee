@@ -1,3 +1,4 @@
+require('app/styles/modal/create-account-modal/create-account-modal.sass')
 ModalView = require 'views/core/ModalView'
 AuthModal = require 'views/core/AuthModal'
 ChooseAccountTypeView = require './ChooseAccountTypeView'
@@ -14,7 +15,6 @@ State = require 'models/State'
 template = require 'templates/core/create-account-modal/create-account-modal'
 forms = require 'core/forms'
 User = require 'models/User'
-application  = require 'core/application'
 errors = require 'core/errors'
 utils = require 'core/utils'
 store = require('core/store')
@@ -72,9 +72,11 @@ module.exports = class CreateAccountModal extends ModalView
       signupForm: {
         subscribe: ['on'] # checked by default
       }
+      subModalContinue: options.subModalContinue
+      wantInSchool: false
     }
 
-    { startOnPath, @signupReturnHref } = options
+    { startOnPath} = options
     switch startOnPath
       when 'student' then @signupState.set({ path: 'student', screen: 'segment-check' })
       when 'individual' then @signupState.set({ path: 'individual', screen: 'segment-check' })
@@ -82,6 +84,8 @@ module.exports = class CreateAccountModal extends ModalView
       else
         if /^\/play/.test(location.pathname)
           @signupState.set({ path: 'individual', screen: 'segment-check' })
+    if @signupState.get('screen') is 'segment-check' and not @segmentCheckRequiredInCountry()
+      @signupState.set screen: 'basic-info'
 
     @listenTo @signupState, 'all', _.debounce @render
 
@@ -114,17 +118,16 @@ module.exports = class CreateAccountModal extends ModalView
         else
           @signupState.set { screen: 'segment-check' }
       'signup': ->
-        if @signupReturnHref
-          window.location.href = @signupReturnHref
-        else if @signupState.get('path') is 'student'
+        if @signupState.get('path') is 'student'
           @signupState.set { screen: 'extras', accountCreated: true }
         else if @signupState.get('path') is 'teacher'
           store.commit('modal/updateSso', _.pick(@signupState.attributes, 'ssoUsed', 'ssoAttrs'))
           store.commit('modal/updateSignupForm', @signupState.get('signupForm'))
           store.commit('modal/updateTrialRequestProperties', _.pick(@signupState.get('signupForm'), 'firstName', 'lastName'))
-          if storage.load('referredBySunburst')
-            store.commit('modal/updateTrialRequestProperties', {'marketingReferrer': 'sunburst'})
           @signupState.set { screen: 'teacher-signup-component' }
+        else if @signupState.get('subModalContinue')
+          storage.save('sub-modal-continue', @signupState.get('subModalContinue'))
+          window.location.reload()
         else
           @signupState.set { screen: 'confirmation', accountCreated: true }
 
@@ -134,14 +137,15 @@ module.exports = class CreateAccountModal extends ModalView
     @listenTo @insertSubView(new SingleSignOnConfirmView({ @signupState })),
       'nav-back': -> @signupState.set { screen: 'basic-info' }
       'signup': ->
-        if @signupReturnHref
-          window.location.href = @signupReturnHref
-        else if @signupState.get('path') is 'student'
+        if @signupState.get('path') is 'student'
           @signupState.set { screen: 'extras', accountCreated: true }
         else if @signupState.get('path') is 'teacher'
           store.commit('modal/updateSso', _.pick(@signupState.attributes, 'ssoUsed', 'ssoAttrs'))
           store.commit('modal/updateSignupForm', @signupState.get('signupForm'))
           @signupState.set { screen: 'teacher-signup-component' }
+        else if @signupState.get('subModalContinue')
+          storage.save('sub-modal-continue', @signupState.get('subModalContinue'))
+          window.location.reload()
         else
           @signupState.set { screen: 'confirmation', accountCreated: true }
 
@@ -188,4 +192,9 @@ module.exports = class CreateAccountModal extends ModalView
       store.unregisterModule('modal')
 
   onClickLoginLink: ->
-    @openModalView(new AuthModal({ initialValues: @signupState.get('authModalInitialValues') }))
+    @openModalView(new AuthModal({ initialValues: @signupState.get('authModalInitialValues'), subModalContinue: @signupState.get('subModalContinue') }))
+
+  segmentCheckRequiredInCountry: ->
+    return true unless me.get('country')
+    return true if me.get('country') in ['united-states', 'austria', 'belgium', 'bulgaria', 'croatia', 'cyprus', 'czech-republic', 'denmark', 'estonia', 'finland', 'france', 'germany', 'greece', 'hungary', 'ireland', 'italy', 'latvia', 'lithuania', 'luxembourg', 'malta', 'netherlands', 'poland', 'portugal', 'romania', 'slovakia', 'slovenia', 'spain', 'sweden', 'united-kingdom']
+    return false

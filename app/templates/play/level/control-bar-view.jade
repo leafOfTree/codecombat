@@ -1,4 +1,4 @@
-- var includeHomeLink = !((me.isStudent() || me.isTeacher()) && !view.course);
+- var includeHomeLink = application.getHocCampaign() || !((me.isStudent() || me.isTeacher()) && !view.course);
 if includeHomeLink
   .left-cap
 .right-cap
@@ -8,7 +8,7 @@ if includeHomeLink
 
 if includeHomeLink
   .levels-link-area
-    a.levels-link(href=homeLink || "/")
+    a.levels-link(href=homeLink || "/", dir="ltr")
       .glyphicon.glyphicon-play
       span(data-i18n=me.isSessionless() ? "nav.courses" : (ladderGame ? "general.ladder" : "nav.map")).home-text
 
@@ -17,7 +17,12 @@ if includeHomeLink
     if view.course
       .level-label= i18n(view.course.attributes, 'name')
     .level-name(title=difficultyTitle || "")
-      span #{view.levelNumber ? view.levelNumber + '. ' : ''}#{worldName.replace('Course: ', '')}
+      - var levelNumberLabel = ''
+      if view.level && view.level.get('assessment')
+        - levelNumberLabel = $.i18n.t('courses.challenge') + ' '
+      else if view.levelNumber
+        - levelNumberLabel = view.levelNumber + '. '
+      span(dir="auto") #{levelNumberLabel}#{worldName.replace('Course: ', '')}
       if levelDifficulty
         sup.level-difficulty= levelDifficulty
 

@@ -1,3 +1,4 @@
+require('app/styles/play/level/tome/spell-palette-view.sass')
 CocoView = require 'views/core/CocoView'
 {me} = require 'core/auth'
 filters = require 'lib/image_filter'
@@ -7,8 +8,8 @@ LevelComponent = require 'models/LevelComponent'
 ThangType = require 'models/ThangType'
 GameMenuModal = require 'views/play/menu/GameMenuModal'
 LevelSetupManager = require 'lib/LevelSetupManager'
-ace = require 'ace'
-utils = require 'core/utils'
+ace = require('lib/aceContainer')
+aceUtils = require 'core/aceUtils'
 
 N_ROWS = 4
 
@@ -183,6 +184,7 @@ module.exports = class SpellPaletteView extends CocoView
       storages = [storages] if _.isString storages
       for storage in storages
         props = _.reject @thang[storage] ? [], (prop) -> prop[0] is '_'  # no private properties
+        props = _.reject props, (prop) -> prop in @thang.excludedProperties if @thang.excludedProperties
         props = _.uniq props
         added = _.sortBy(props).slice()
         propGroups[owner] = (propGroups[owner] ? []).concat added
@@ -250,6 +252,7 @@ module.exports = class SpellPaletteView extends CocoView
             if props = component.config[storages]
               for prop in _.sortBy(props) when prop[0] isnt '_' and not itemsByProp[prop]  # no private properties
                 continue if prop is 'moveXY' and @options.level.get('slug') is 'slalom'  # Hide for Slalom
+                continue if @thang.excludedProperties and prop in @thang.excludedProperties
                 propsByItem[item.get('name')] ?= []
                 propsByItem[item.get('name')].push owner: owner, prop: prop, item: item
                 itemsByProp[prop] = item
@@ -266,6 +269,7 @@ module.exports = class SpellPaletteView extends CocoView
       programmaticon = itemThangTypes[programmaticonName]
       sortedProps = @thang[storage].slice().sort()
       for prop in sortedProps
+        continue if @thang.excludedProperties and prop in @thang.excludedProperties
         if doc = _.find (allDocs['__' + prop] ? []), {owner: owner}  # Not all languages have all props
           entry = @addEntry doc, false, false, programmaticon
           @tabs[owner].push entry
@@ -276,6 +280,7 @@ module.exports = class SpellPaletteView extends CocoView
       for prop in _.reject(@thang[storage] ? [], (prop) -> itemsByProp[prop] or prop[0] is '_')  # no private properties
         continue if prop is 'say' and @options.level.get 'hidesSay'  # Hide for Dungeon Campaign
         continue if prop is 'moveXY' and @options.level.get('slug') is 'slalom'  # Hide for Slalom
+        continue if @thang.excludedProperties and prop in @thang.excludedProperties
         propsByItem['Hero'] ?= []
         propsByItem['Hero'].push owner: owner, prop: prop, item: itemThangTypes[@thang.spriteName]
         ++propCount
@@ -371,13 +376,14 @@ module.exports = class SpellPaletteView extends CocoView
     content = @$el.find(".rightContentTarget")
     content.html(e.entry.doc.initialHTML)
     content.i18n()
+    @applyRTLIfNeeded()
     codeLanguage = e.entry.options.language
     oldEditor.destroy() for oldEditor in @aceEditors
     @aceEditors = []
     aceEditors = @aceEditors
     # Initialize Ace for each popover code snippet that still needs it
     content.find('.docs-ace').each ->
-      aceEditor = utils.initializeACE @, codeLanguage
+      aceEditor = aceUtils.initializeACE @, codeLanguage
       aceEditors.push aceEditor
 
   destroy: ->

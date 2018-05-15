@@ -1,8 +1,8 @@
 GRAVATAR_URL = 'https://www.gravatar.com/'
 cache = {}
 CocoModel = require './CocoModel'
-ThangType = require './ThangType'
-Level = require './Level'
+ThangTypeConstants = require 'lib/ThangTypeConstants'
+LevelConstants = require 'lib/LevelConstants'
 utils = require 'core/utils'
 
 # Pure functions for use in Vue
@@ -81,13 +81,12 @@ module.exports = class User extends CocoModel
 
   isStudent: -> @get('role') is 'student'
 
-  isTeacher: ->
+  isTeacher: (includePossibleTeachers=false) ->
+    return true if includePossibleTeachers and @get('role') is 'possible teacher'  # They maybe haven't created an account but we think they might be a teacher based on behavior
     return @get('role') in ['teacher', 'technology coordinator', 'advisor', 'principal', 'superintendent', 'parent']
 
   isSessionless: ->
-    # TODO: Fix old users who got mis-tagged as teachers
-    # TODO: Should this just be isTeacher, eventually?
-    Boolean((utils.getQueryVariable('dev', false) or me.isTeacher()) and utils.getQueryVariable('course', false))
+    Boolean((utils.getQueryVariable('dev', false) or me.isTeacher()) and utils.getQueryVariable('course', false) and not utils.getQueryVariable('course-instance'))
 
   setRole: (role, force=false) ->
     oldRole = @get 'role'
@@ -136,21 +135,21 @@ module.exports = class User extends CocoModel
     Math.floor gemsEarned + gemsPurchased - gemsSpent
 
   heroes: ->
-    heroes = (me.get('purchased')?.heroes ? []).concat([ThangType.heroes.captain, ThangType.heroes.knight, ThangType.heroes.champion, ThangType.heroes.duelist])
-    heroes.push ThangType.heroes['code-ninja'] if window.serverConfig.codeNinjas
-    #heroes = _.values ThangType.heroes if me.isAdmin()
+    heroes = (me.get('purchased')?.heroes ? []).concat([ThangTypeConstants.heroes.captain, ThangTypeConstants.heroes.knight, ThangTypeConstants.heroes.champion, ThangTypeConstants.heroes.duelist])
+    heroes.push ThangTypeConstants.heroes['code-ninja'] if window.serverConfig.codeNinjas
+    #heroes = _.values ThangTypeConstants.heroes if me.isAdmin()
     heroes
-  items: -> (me.get('earned')?.items ? []).concat(me.get('purchased')?.items ? []).concat([ThangType.items['simple-boots']])
-  levels: -> (me.get('earned')?.levels ? []).concat(me.get('purchased')?.levels ? []).concat(Level.levels['dungeons-of-kithgard'])
+  items: -> (me.get('earned')?.items ? []).concat(me.get('purchased')?.items ? []).concat([ThangTypeConstants.items['simple-boots']])
+  levels: -> (me.get('earned')?.levels ? []).concat(me.get('purchased')?.levels ? []).concat(LevelConstants.levels['dungeons-of-kithgard'])
   ownsHero: (heroOriginal) -> me.isInGodMode() || heroOriginal in @heroes()
   ownsItem: (itemOriginal) -> itemOriginal in @items()
   ownsLevel: (levelOriginal) -> levelOriginal in @levels()
 
   getHeroClasses: ->
-    idsToSlugs = _.invert ThangType.heroes
+    idsToSlugs = _.invert ThangTypeConstants.heroes
     myHeroSlugs = (idsToSlugs[id] for id in @heroes())
     myHeroClasses = []
-    myHeroClasses.push heroClass for heroClass, heroSlugs of ThangType.heroClasses when _.intersection(myHeroSlugs, heroSlugs).length
+    myHeroClasses.push heroClass for heroClass, heroSlugs of ThangTypeConstants.heroClasses when _.intersection(myHeroSlugs, heroSlugs).length
     myHeroClasses
 
   validate: ->
@@ -209,6 +208,14 @@ module.exports = class User extends CocoModel
     # Not a constant number of videos available (e.g. could be 0, 1, 3, or 4 currently)
     return 0 unless numVideos > 0
     return me.get('testGroupNumber') % numVideos
+
+  testCinematicPlayback: ->
+    return @shouldTestCinematicPlayback if @shouldTestCinematicPlayback?
+    return true if me.isAdmin()
+    return false if me.isStudent() or me.isTeacher()
+    @shouldTestCinematicPlayback = me.get('testGroupNumber') % 2 is 0
+    application.tracker.identify cinematicPlayback: @shouldTestCinematicPlayback
+    @shouldTestCinematicPlayback
 
   hasSubscription: ->
     return false if me.isStudent() or me.isTeacher()

@@ -79,6 +79,12 @@ $UNVEIL_TIME: 1.2s
     .level-loading-goals
       text-align: left
 
+      body[lang="he"] &, body[lang="ar"] &, body[lang="fa"] &, body[lang="ur"] &
+        text-align: right
+
+        ul
+          padding-right: 0
+
       .goals-title
         font-size: 32px
         color: black
@@ -87,11 +93,15 @@ $UNVEIL_TIME: 1.2s
       li
         font-size: 20px
         color: black
+        margin-left: -25px
 
     .intro-doc
       text-align: left
       font-size: 16px
       //overflow-y: scroll  // using nanoscroller now
+
+      body[lang="he"] &, body[lang="ar"] &, body[lang="fa"] &, body[lang="ur"] &
+        text-align: right
 
       img
         max-width: 100%

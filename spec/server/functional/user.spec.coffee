@@ -1536,6 +1536,57 @@ describe 'POST /db/user/:userId/reset_progress', ->
     url = utils.getUrl("/db/user/12345/reset_progress")
     [res] = yield request.postAsync({ url })
     expect(res.statusCode).toBe(401)
+    
+  it 'allows admins to reset other accounts', utils.wrap ->
+    admin = yield utils.initAdmin()
+    user = yield utils.initUser()
+    yield utils.loginUser(user)
+    session = yield utils.makeLevelSession({}, {creator:user})
+    earnedAchievement = new EarnedAchievement({ user: user.id })
+    yield earnedAchievement.save()
+    
+    yield utils.loginUser(admin)
+    url = utils.getUrl("/db/user/#{user.id}/reset_progress")
+    [res] = yield request.postAsync({ url })
+    expect(res.statusCode).toBe(200)
+    stillExist = yield [
+      LevelSession.findById(session.id)
+      EarnedAchievement.findById(earnedAchievement.id)
+    ]
+    expect(_.any(stillExist)).toBe(false)
+    
+  it 'returns 404 for non-existent users', utils.wrap ->
+    admin = yield utils.initAdmin()
+    yield utils.loginUser(admin)
+    url = utils.getUrl("/db/user/dne/reset_progress")
+    [res] = yield request.postAsync({ url })
+    expect(res.statusCode).toBe(404)
+
+
+describe 'GET /db/user/:handle/clans', ->
+  it 'returns that user\'s public clans only, unless fetching ones own clans', utils.wrap ->
+    user = yield utils.initUser({stripe: {free: true}})
+    url = utils.getUrl("/db/user/#{user.id}/clans")
+
+    yield utils.loginUser(user)
+    publicClan = yield utils.makeClan({type: 'public'})
+    privateClan = yield utils.makeClan({type: 'private'})
+
+    [res] = yield request.getAsync { url, json: true }
+    expect(res.statusCode).toBe(200)
+    expect(res.body.length).toBe(2)
+    expect(_.find(res.body, {_id: publicClan.id})).toBeTruthy()
+    expect(_.find(res.body, {_id: privateClan.id})).toBeTruthy()
+
+    otherUser = yield utils.initUser()
+    yield utils.loginUser(otherUser)
+    [res] = yield request.getAsync { url, json: true }
+    expect(res.statusCode).toBe(200)
+    expect(res.body.length).toBe(1)
+    expect(_.find(res.body, {_id: publicClan.id})).toBeTruthy()
+    expect(_.find(res.body, {_id: privateClan.id})).toBeFalsy()
+    
+
 
     
 describe 'GET /db/user/:handle/avatar', ->
@@ -1573,3 +1624,46 @@ describe 'GET /db/user/:handle/avatar', ->
     [res] = yield request.getAsync({url, followRedirect: false, headers: {'x-forwarded-proto': 'http', host: 'subdomain.codecombat.com', 'x-forwarded-port': '8080'}})
     expect(res.statusCode).toBe(302)
     expect(_.str.contains(res.headers.location, 'default=http://subdomain.codecombat.com:8080/')).toBe(true)
+
+
+describe 'GET /db/user/:handle/course-instances', ->
+  beforeEach utils.wrap ->
+    @campaignSlug = 'intro'
+    @student = yield utils.initUser({ role: 'student' })
+    @admin = yield utils.initAdmin()
+    yield utils.loginUser(@admin)
+    @campaign = yield utils.makeCampaign({ name: 'Intro' })
+    @course = yield utils.makeCourse({free: true, releasePhase: 'released'}, { @campaign })
+    @teacher = yield utils.initUser({ role: 'teacher' })
+    yield utils.loginUser(@teacher)
+    @classroom = yield utils.makeClassroom({}, { members: [@student] })
+    @courseInstance = yield utils.makeCourseInstance({}, { @course, @classroom, members: [@student] })
+    yield utils.loginUser(@student)
+
+  it "returns a corresponding courseInstance for the classroom version's course", utils.wrap ->
+    url = utils.getUrl("/db/user/#{@student.id}/course-instances")
+    qs = {campaignSlug: @campaign.get('slug')}
+    [res] = yield request.getAsync({url, qs, json: true})
+    expect(res.body.length).toBe(1)
+    expect(res.body[0]._id).toBe(@courseInstance.id)
+    
+    
+describe 'PUT /db/user/:handle/verifiedTeacher', ->
+  it 'sets the verifiedTeacher property on the given user', utils.wrap ->
+    user = yield utils.initUser()
+    admin = yield utils.initAdmin()
+    yield utils.loginUser(admin)
+    url = utils.getUrl("/db/user/#{user.id}/verifiedTeacher")
+    [res] = yield request.putAsync({url, json: true, body: true})
+    expect(res.statusCode).toBe(200)
+    expect(res.body.verifiedTeacher).toBe(true)
+    user = yield User.findById(user.id)
+    expect(user.get('verifiedTeacher')).toBe(true)
+
+  it 'returns 403 unless you are an admin', utils.wrap ->
+    user = yield utils.initUser()
+    yield utils.loginUser(user)
+    url = utils.getUrl("/db/user/#{user.id}/verifiedTeacher")
+    [res] = yield request.putAsync({url, json: true, body: true})
+    expect(res.statusCode).toBe(403)
+    

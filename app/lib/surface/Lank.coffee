@@ -7,6 +7,7 @@ AudioPlayer = require 'lib/AudioPlayer'
 {me} = require 'core/auth'
 ThangType = require 'models/ThangType'
 utils = require 'core/utils'
+createjs = require 'lib/createjs-parts'
 
 # We'll get rid of this once level's teams actually have colors
 healthColors =
@@ -226,7 +227,7 @@ module.exports = Lank = class Lank extends CocoClass
         console.error "#{@thang.id} couldn't find layer #{layerName}Layer for AOE effect #{key}; using ground layer."
         layer = @options.groundLayer
 
-      unless key in layer.spriteSheet.getAnimations()
+      unless key in layer.spriteSheet.animations
         circle = new createjs.Shape()
         radius = args[2] * Camera.PPM
         if args.length is 4
@@ -518,7 +519,7 @@ module.exports = Lank = class Lank extends CocoClass
     team = @thang?.team or 'neutral'
     key = "#{team}-health-bar"
 
-    unless key in @options.floatingLayer.spriteSheet.getAnimations()
+    unless key in @options.floatingLayer.spriteSheet.animations
       healthColor = healthColors[team]
       bar = createProgressBar(healthColor)
       @options.floatingLayer.addCustomGraphic(key, bar, bar.bounds)
@@ -762,7 +763,7 @@ module.exports = Lank = class Lank extends CocoClass
     if _.isArray sound
       sound = sound[Math.floor Math.random() * sound.length]
     return null unless sound
-    delay = if withDelay and sound.delay then 1000 * sound.delay / createjs.Ticker.getFPS() else 0
+    delay = if withDelay and sound.delay then 1000 * sound.delay / createjs.Ticker.framerate else 0
     name = AudioPlayer.nameForSoundReference sound
     AudioPlayer.preloadSoundReference sound
     instance = AudioPlayer.playSound name, volume, delay, @getWorldPosition()

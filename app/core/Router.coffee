@@ -1,3 +1,6 @@
+dynamicRequire = require('lib/dynamicRequire')
+locale = require 'locale/locale'
+
 go = (path, options) -> -> @routeDirectly path, arguments, options
 
 redirect = (path) -> ->
@@ -20,6 +23,7 @@ module.exports = class CocoRouter extends Backbone.Router
       if window.serverConfig.picoCTF
         return @routeDirectly 'play/CampaignView', ['picoctf'], {}
       if utils.getQueryVariable 'hour_of_code'
+        delete window.alreadyLoadedView
         return @navigate "/play?hour_of_code=true", {trigger: true, replace: true}
       unless me.isAnonymous() or me.isStudent() or me.isTeacher() or me.isAdmin() or me.hasSubscription()
         delete window.alreadyLoadedView
@@ -45,9 +49,11 @@ module.exports = class CocoRouter extends Backbone.Router
     'admin/files': go('admin/FilesView')
     'admin/analytics': go('admin/AnalyticsView')
     'admin/analytics/subscriptions': go('admin/AnalyticsSubscriptionsView')
+    'admin/level-hints': go('admin/AdminLevelHintsView')
     'admin/level-sessions': go('admin/LevelSessionsView')
     'admin/school-counts': go('admin/SchoolCountsView')
     'admin/school-licenses': go('admin/SchoolLicensesView')
+    'admin/sub-cancellations': go('admin/AdminSubCancellationsView')
     'admin/base': go('admin/BaseView')
     'admin/demo-requests': go('admin/DemoRequestsView')
     'admin/trial-requests': go('admin/TrialRequestsView')
@@ -58,6 +64,8 @@ module.exports = class CocoRouter extends Backbone.Router
     'admin/outcomes-report-result': go('admin/OutcomeReportResultView')
     'admin/outcomes-report': go('admin/OutcomesReportView')
 
+    'apcsp(/*subpath)': go('teachers/DynamicAPCSPView')
+
     'artisans': go('artisans/ArtisansView')
 
     'artisans/level-tasks': go('artisans/LevelTasksView')
@@ -67,6 +75,8 @@ module.exports = class CocoRouter extends Backbone.Router
     'artisans/level-guides': go('artisans/LevelGuidesView')
     'artisans/student-solutions': go('artisans/StudentSolutionsView')
     'artisans/tag-test': go('artisans/TagTestView')
+    'artisans/bulk-level-editor': go('artisans/BulkLevelEditView')
+    'artisans/bulk-level-editor/:campaign': go('artisans/BulkLevelEditView')
 
     'careers': => window.location.href = 'https://jobs.lever.co/codecombat'
     'Careers': => window.location.href = 'https://jobs.lever.co/codecombat'
@@ -97,9 +107,8 @@ module.exports = class CocoRouter extends Backbone.Router
     'courses/:courseID/:courseInstanceID': -> @navigate("/students/#{arguments[0]}/#{arguments[1]}", {trigger: true, replace: true}) # Redirected 9/3/16
 
     'db/*path': 'routeToServer'
-    'demo(/*subpath)': go('DemoView')
-    'docs/components': go('docs/ComponentsDocumentationView')
-    'docs/systems': go('docs/SystemsDocumentationView')
+    'docs/components': go('editor/docs/ComponentsDocumentationView')
+    'docs/systems': go('editor/docs/SystemsDocumentationView')
 
     'editor': go('CommunityView')
 
@@ -115,13 +124,14 @@ module.exports = class CocoRouter extends Backbone.Router
     'editor/campaign/:campaignID': go('editor/campaign/CampaignEditorView')
     'editor/poll': go('editor/poll/PollSearchView')
     'editor/poll/:articleID': go('editor/poll/PollEditView')
-    'editor/thang-tasks': go('editor/ThangTasksView')
     'editor/verifier': go('editor/verifier/VerifierView')
     'editor/verifier/:levelID': go('editor/verifier/VerifierView')
     'editor/i18n-verifier/:levelID': go('editor/verifier/i18nVerifierView')
     'editor/i18n-verifier': go('editor/verifier/i18nVerifierView')
     'editor/course': go('editor/course/CourseSearchView')
     'editor/course/:courseID': go('editor/course/CourseEditView')
+
+    'etc': redirect('/teachers/demo')
 
     'file/*path': 'routeToServer'
 
@@ -155,10 +165,14 @@ module.exports = class CocoRouter extends Backbone.Router
     'play/ladder/:levelID': go('ladder/LadderView')
     'play/ladder': go('ladder/MainLadderView')
     'play/level/:levelID': go('play/level/PlayLevelView')
-    'play/game-dev-level/:levelID/:sessionID': go('play/level/PlayGameDevLevelView')
-    'play/web-dev-level/:levelID/:sessionID': go('play/level/PlayWebDevLevelView')
+    'play/game-dev-level/:sessionID': go('play/level/PlayGameDevLevelView')
+    'play/web-dev-level/:sessionID': go('play/level/PlayWebDevLevelView')
+    'play/game-dev-level/:levelID/:sessionID': (levelID, sessionID) ->
+      @navigate("play/game-dev-level/#{sessionID}", { trigger: true, replace: true })
+    'play/web-dev-level/:levelID/:sessionID': (levelID, sessionID) ->
+      @navigate("play/web-dev-level/#{sessionID}", { trigger: true, replace: true })
     'play/spectate/:levelID': go('play/SpectateView')
-    'play/:map': go('play/CampaignView', { redirectTeachers: true })
+    'play/:map': go('play/CampaignView')
 
     'premium': go('PremiumFeaturesView')
     'Premium': go('PremiumFeaturesView')
@@ -171,11 +185,10 @@ module.exports = class CocoRouter extends Backbone.Router
     'seen': go('HomeView')
     'SEEN': go('HomeView')
 
-    'sunburst': go('HomeView')
-
     'students': go('courses/CoursesView', { redirectTeachers: true })
     'students/update-account': go('courses/CoursesUpdateAccountView', { redirectTeachers: true })
     'students/project-gallery/:courseInstanceID': go('courses/ProjectGalleryView')
+    'students/assessments/:classroomID': go('courses/StudentAssessmentsView')
     'students/:classroomID': go('courses/ClassroomView', { redirectTeachers: true, studentsOnly: true })
     'students/:courseID/:courseInstanceID': go('courses/CourseDetailsView', { redirectTeachers: true, studentsOnly: true })
     'teachers': redirect('/teachers/classes')
@@ -245,24 +258,25 @@ module.exports = class CocoRouter extends Backbone.Router
       path = 'play/CampaignView'
 
     path = "views/#{path}" if not _.string.startsWith(path, 'views/')
-    ViewClass = @tryToLoadModule path
-    if not ViewClass and application.moduleLoader.load(path)
-      @listenToOnce application.moduleLoader, 'load-complete', ->
-        options.recursive = true
-        @routeDirectly(path, args, options)
-      return
-    return go('NotFoundView') if not ViewClass
-    view = new ViewClass(options, args...)  # options, then any path fragment args
-    view.render()
-    if window.alreadyLoadedView
-      console.log "Need to merge view"
-      delete window.alreadyLoadedView
-      @mergeView(view)
-    else
-      @openView(view)
+    Promise.all([
+      dynamicRequire[path](), # Load the view file
+      # The locale load is already initialized by `application`, just need the promise
+      locale.load(me.get('preferredLanguage', true))
+    ]).then ([ViewClass]) =>
+      return go('NotFoundView') if not ViewClass
+      view = new ViewClass(options, args...)  # options, then any path fragment args
+      view.render()
+      if window.alreadyLoadedView
+        console.log "Need to merge view"
+        delete window.alreadyLoadedView
+        @mergeView(view)
+      else
+        @openView(view)
 
-    @viewLoad.setView(view)
-    @viewLoad.record()
+      @viewLoad.setView(view)
+      @viewLoad.record()
+    .catch (err) ->
+      console.log err
 
   redirectHome: ->
     delete window.alreadyLoadedView
@@ -271,13 +285,6 @@ module.exports = class CocoRouter extends Backbone.Router
       when me.isTeacher() then '/teachers'
       else '/'
     @navigate(homeUrl, {trigger: true, replace: true})
-
-  tryToLoadModule: (path) ->
-    try
-      return window.require(path)
-    catch error
-      if error.toString().search('Cannot find module "' + path + '" from') is -1
-        throw error
 
   openView: (view) ->
     @closeCurrentView()
@@ -307,6 +314,7 @@ module.exports = class CocoRouter extends Backbone.Router
       return document.location.reload()
     window.currentModal?.hide?()
     return unless window.currentView?
+    window.currentView.modalClosed()
     window.currentView.destroy()
     $('.popover').popover 'hide'
     $('#flying-focus').css({top: 0, left: 0}) # otherwise it might make the page unnecessarily tall
@@ -339,12 +347,9 @@ module.exports = class CocoRouter extends Backbone.Router
   onNavigate: (e, recursive=false) ->
     @viewLoad = new ViewLoadTimer() unless recursive
     if _.isString e.viewClass
-      ViewClass = @tryToLoadModule e.viewClass
-      if not ViewClass and application.moduleLoader.load(e.viewClass)
-        @listenToOnce application.moduleLoader, 'load-complete', ->
-          @onNavigate(e, true)
-        return
-      e.viewClass = ViewClass
+      dynamicRequire[e.viewClass]().then (viewClass) =>
+        @onNavigate(_.assign({}, e, {viewClass}), true)
+      return
 
     manualView = e.view or e.viewClass
     if (e.route is document.location.pathname) and not manualView

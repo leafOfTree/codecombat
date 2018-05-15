@@ -15,6 +15,7 @@ parse = require '../commons/parse'
 LevelSession = require '../models/LevelSession'
 User = require '../models/User'
 CourseInstance = require '../models/CourseInstance'
+Prepaid = require '../models/Prepaid'
 TrialRequest = require '../models/TrialRequest'
 sendwithus = require '../sendwithus'
 co = require 'co'
@@ -23,7 +24,7 @@ subscriptions = require './subscriptions'
 { makeHostUrl } = require '../commons/urls'
 
 module.exports =
-  fetchByCode: wrap (req, res, next) ->
+  getByCode: wrap (req, res, next) ->
     code = req.query.code
     return next() unless req.query.hasOwnProperty('code')
     classroom = yield Classroom.findOne({ code: code.toLowerCase().replace(RegExp(' ', 'g') , '') }).select('name ownerID aceConfig')
@@ -53,6 +54,19 @@ module.exports =
     classrooms = yield dbq
     classrooms = (classroom.toObject({req: req}) for classroom in classrooms)
     res.status(200).send(classrooms)
+    
+  getByMember: wrap (req, res, next) ->
+    { memberID } = req.query
+    return next() unless memberID
+
+    unless req.user and (req.user.isAdmin() or memberID is req.user.id)
+      throw new errors.Forbidden()
+
+    unless utils.isID memberID
+      throw new errors.UnprocessableEntity('Bad memberID')
+
+    classrooms = yield Classroom.find {members: mongoose.Types.ObjectId(memberID)}
+    res.send((classroom.toObject({req}) for classroom in classrooms))
 
   fetchAllLevels: wrap (req, res, next) ->
     classroom = yield database.getDocFromHandle(req, Classroom)
@@ -143,6 +157,77 @@ module.exports =
 
     res.status(200).send(memberObjects)
 
+  checkIsAutoRevokable: wrap (req, res, next) ->
+    userID = req.params.memberID
+    throw new errors.UnprocessableEntity('Member ID must be a MongoDB ID') unless utils.isID(userID)
+    try
+      classroom = yield Classroom.findById req.params.classroomID
+    catch err
+      throw new errors.InternalServerError('Error finding classroom by ID: ' + err)
+    throw new errors.NotFound('No classroom found with that ID') if not classroom
+    if not _.any(classroom.get('members'), (memberID) -> memberID.toString() is userID)
+      throw new errors.Forbidden()
+    ownsClassroom = classroom.get('ownerID').equals(req.user.get('_id'))
+    unless ownsClassroom
+      throw new errors.Forbidden()
+
+    try
+      otherClassrooms = yield Classroom.find { members: mongoose.Types.ObjectId(userID), _id: {$ne: classroom.get('_id')} }
+    catch err
+      throw new errors.InternalServerError('Error finding other classrooms by memberID: ' + err)
+  
+    # If the student is being removed from their very last classroom, unenroll them
+    user = yield User.findOne({ _id: mongoose.Types.ObjectId(userID) })
+    if user.isEnrolled() and otherClassrooms.length is 0
+      # log.debug "User removed from their last classroom; auto-revoking:", userID
+      prepaid = yield Prepaid.findOne({ type: "course", "redeemers.userID": mongoose.Types.ObjectId(userID) })
+      if prepaid
+        if not prepaid.canBeUsedBy(req.user._id)
+          return res.status(200).send({ willRevokeLicense: false })
+
+        # This logic is slightly different than the removing endpoint,
+        # since we don't want to tell a teacher it will be revoked unless it's *their* license
+        return res.status(200).send({ willRevokeLicense: true })
+
+    return res.status(200).send({ willRevokeLicense: false })
+
+  deleteMember: wrap (req, res, next) ->
+    userID = req.params.memberID
+    throw new errors.UnprocessableEntity('Member ID must be a MongoDB ID') unless utils.isID(userID)
+    try
+      classroom = yield Classroom.findById req.params.classroomID
+    catch err
+      throw new errors.InternalServerError('Error finding classroom by ID: ' + err)
+    throw new errors.NotFound('No classroom found with that ID') if not classroom
+    if not _.any(classroom.get('members'), (memberID) -> memberID.toString() is userID)
+      throw new errors.Forbidden()
+    ownsClassroom = classroom.get('ownerID').equals(req.user.get('_id'))
+    unless ownsClassroom
+      throw new errors.Forbidden()
+
+    try
+      otherClassrooms = yield Classroom.find { members: mongoose.Types.ObjectId(userID), _id: {$ne: classroom.get('_id')} }
+    catch err
+      throw new errors.InternalServerError('Error finding other classrooms by memberID: ' + err)
+  
+    # If the student is being removed from their very last classroom, unenroll them
+    user = yield User.findOne({ _id: mongoose.Types.ObjectId(userID) })
+    if user.isEnrolled() and otherClassrooms.length is 0
+      # log.debug "User removed from their last classroom; auto-revoking:", userID
+      prepaid = yield Prepaid.findOne({ type: "course", "redeemers.userID": mongoose.Types.ObjectId(userID) })
+      if prepaid
+        yield prepaid.revoke(user)
+
+    members = _.clone(classroom.get('members'))
+    members = (m for m in members when m.toString() isnt userID)
+    classroom.set('members', members)
+    try
+      classroom = yield classroom.save()
+    catch err
+      console.log err
+      throw new errors.InternalServerError(err)
+    res.status(200).send(classroom.toObject())
+
   fetchPlaytimes: wrap (req, res, next) ->
     # For given courseID, returns array of course/level IDs and slugs, and an array of recent level sessions
     # TODO: returns on this are pretty weird, because the client calls it repeatedly for more data
@@ -212,6 +297,7 @@ module.exports =
     classroom.set 'members', []
     database.assignBody(req, classroom)
 
+    owner = req.user
     yield classroom.setUpdatedCourses({isAdmin: req.user?.isAdmin(), addNewCoursesOnly: false})
 
     # finish
@@ -297,6 +383,11 @@ module.exports =
     if not req.body.emails
       log.debug "classrooms.inviteMembers: No emails included in request: #{JSON.stringify(req.body)}"
       throw new errors.UnprocessableEntity('Emails not included')
+    if not req.body.recaptchaResponseToken
+      log.debug "classrooms.inviteMembers: No recaptchaResponseToken included in request: #{JSON.stringify(req.body)}"
+      throw new errors.UnprocessableEntity('Recaptcha response token not included')
+    unless yield utils.verifyRecaptchaToken(req.body.recaptchaResponseToken)
+      throw new errors.UnprocessableEntity('Could not verify reCAPTCHA response token')
 
     classroom = yield database.getDocFromHandle(req, Classroom)
     if not classroom
@@ -323,5 +414,10 @@ module.exports =
 
   getUsers: wrap (req, res, next) ->
     throw new errors.Unauthorized('You must be an administrator.') unless req.user?.isAdmin()
-    classrooms = yield Classroom.find().select('ownerID members').lean()
+    limit = parseInt(req.query.options?.limit ? 0)
+    query = {}
+    if req.query.options?.beforeId
+      beforeId = mongoose.Types.ObjectId(req.query.options.beforeId)
+      query = {$and: [{_id: {$lt: beforeId}}, query]}
+    classrooms = yield Classroom.find(query).sort({_id: -1}).limit(limit).select('ownerID members').lean()
     res.status(200).send(classrooms)

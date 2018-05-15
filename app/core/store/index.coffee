@@ -1,3 +1,5 @@
+Vuex = require('vuex').default
+
 store = new Vuex.Store({
   strict: not application.isProduction()
   state: {
@@ -15,7 +17,9 @@ store = new Vuex.Store({
     updateFeatures: (state, features) -> state.features = features
   }
   modules: {
-    me: require('./modules/me')
+    me: require('./modules/me'),
+    courses: require('./modules/courses'),
+    game: require('./modules/game')
   }
 })
 
